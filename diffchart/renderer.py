@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import pydiffvg
-from typing import List
+from typing import List, Union
 from .primitives import ChartElement
 
 class DiffChartRenderer(nn.Module):
@@ -36,23 +36,33 @@ class DiffChartRenderer(nn.Module):
         """
         执行一次完整的渲染流程。
         """
-        shapes = []
-        shape_groups = []
+        all_shapes = []
+        all_groups = []
+        
+        current_shape_idx = 0
         
         # 1. 动态获取所有元素的几何形状
-        for i, elem in enumerate(self.elements):
-            shape, group = elem() # 调用 ChartElement.forward()
+        for elem in self.elements:
+            result = elem() # 调用 ChartElement.forward()
             
-            # 统一分配 ID，这对 pydiffvg 渲染至关重要
-            # group.shape_ids 必须指向 shapes 列表中的索引
-            group.shape_ids = torch.tensor([i], device=self.device)
+            # 统一处理返回值是单个还是列表的情况
+            if isinstance(result[0], (list, tuple)):
+                elem_shapes, elem_groups = result
+            else:
+                elem_shapes = [result[0]]
+                elem_groups = [result[1]]
             
-            shapes.append(shape)
-            shape_groups.append(group)
+            # 分配全局唯一的 ID
+            for shape, group in zip(elem_shapes, elem_groups):
+                group.shape_ids = torch.tensor([current_shape_idx], device=self.device)
+                current_shape_idx += 1
+                
+                all_shapes.append(shape)
+                all_groups.append(group)
         
         # 2. 序列化场景
         scene_args = pydiffvg.RenderFunction.serialize_scene(
-            self.canvas_width, self.canvas_height, shapes, shape_groups
+            self.canvas_width, self.canvas_height, all_shapes, all_groups
         )
         
         # 3. 光栅化 (Rasterization)
